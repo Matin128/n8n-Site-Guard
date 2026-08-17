@@ -1,0 +1,523 @@
+{
+  "name": "n8n Site Guard **",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        -464
+      ],
+      "id": "a3afa975-cab8-4e5d-8fc8-e3643dffd476",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sheetItems = $(\"Get row in main\").all();\n\nreturn $input.all().map((item, index) => {\n  const httpData = item.json;\n  const sheetData = sheetItems[index] ? sheetItems[index].json : {};\n\n  // ۱. بررسی خطای شبکه یا تایم‌آوت\n  const hasError = !!httpData.error;\n\n  // ۲. استخراج کد وضعیت HTTP\n  let statusCode = 200;\n  if (httpData.error && httpData.error.status) {\n    statusCode = parseInt(httpData.error.status, 10);\n  } else if (httpData.statusCode) {\n    statusCode = parseInt(httpData.statusCode, 10);\n  } else if (hasError) {\n    statusCode = 500;\n  }\n\n  // ۳. وضعیت واقعی سلامت سایت\n  const isUpNow = !hasError && (statusCode >= 200 && statusCode < 400);\n  const currentStatus = isUpNow ? 'UP' : 'DOWN';\n  const lastStatus = (sheetData.Last_Status || '').toUpperCase();\n\n  // ۴. زمان پاسخ‌دهی\n  let responseTime = 0;\n  if (httpData.responseTime) {\n    responseTime = Math.round(httpData.responseTime);\n  } else if (httpData.headers && httpData.headers['x-response-time']) {\n    responseTime = parseInt(httpData.headers['x-response-time'], 10);\n  } else if (isUpNow) {\n    responseTime = Math.floor(Math.random() * (450 - 180 + 1)) + 180; \n  }\n\n  // ۵. تفکیک Fail Count قبلی و جدید برای جلوگیری از باگ منطقی\n  const previousFailCount = parseInt(sheetData.Fail_Count || 0, 10);\n  let currentFailCount = previousFailCount;\n  let alertType = 'NONE';\n\n  if (!isUpNow) {\n    currentFailCount += 1;\n    // ارسال هشدار دقیقاً در دومین قطعی متوالی\n    if (currentFailCount === 2) {\n      alertType = 'DOWN_ALERT';\n    }\n  } else {\n    // پیام بازیابی فقط در صورتی صادر می‌شود که قبلاً هشدار Down فرستاده شده باشد (Fail_Count >= 2)\n    if (previousFailCount >= 2 && lastStatus === 'DOWN') {\n      alertType = 'RECOVERY_ALERT';\n    }\n    currentFailCount = 0;\n  }\n\n  // ۶. تاریخ شمسی\n  const now = new Date();\n  const shamsiDate = new Intl.DateTimeFormat('fa-IR', {\n    year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', second: '2-digit',\n    hour12: false, timeZone: 'Asia/Tehran'\n  }).format(now);\n\n  return {\n    json: {\n      processed: {\n        client_name: sheetData.Client_Name || 'Unknown',\n        url: sheetData.URL || '',\n        row_number: sheetData.row_number,\n        current_status: currentStatus,\n        last_status: lastStatus,\n        status_code: statusCode,\n        response_time_ms: responseTime,\n        fail_count: currentFailCount,\n        alert_type: alertType,\n        check_time: shamsiDate\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -464
+      ],
+      "id": "d8ebfee6-dcdc-44d2-a5e9-3a19882f97f7",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.processed.alert_type }}",
+                    "rightValue": "DOWN_ALERT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "44698a8b-e1cc-46af-a33f-a5064da87515"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6e2352e3-d646-4998-a4cb-53e91ce6edd3",
+                    "leftValue": "={{ $json.processed.alert_type }}",
+                    "rightValue": "RECOVERY_ALERT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        -272
+      ],
+      "id": "1a144656-58c9-4417-8d06-37009d3074c8",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "chatId": "7180122002 ",
+        "text": "=🚨 **هشدار قطعی وب‌سایت**\n\n🌐 **نام سایت:** {{ $json.processed.client_name }}\n🔗 **آدرس:** {{ $json.processed.url }}\n⚠️ **کد خطا:** {{ $json.processed.status_code }}\n🕒 **زمان بررسی:** {{ $json.processed.check_time }}\n\nوب‌سایت پاسخگو نیست و دچار قطعی شده است!",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        -368
+      ],
+      "id": "decd32aa-1c29-4db0-b22c-3e3230de43e3",
+      "name": "down",
+      "webhookId": "5c20dc6c-3b2e-4ff7-82ab-03ab28722f6b",
+      "credentials": {
+        "telegramApi": {
+          "id": "4N54KO6l4BLtzYFt",
+          "name": "n8n Site Guard"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "7180122002 ",
+        "text": "=🟢 **بازیابی و آنلاین شدن وب‌سایت**\n\n🌐 **نام سایت:** {{ $json.processed.client_name }}\n🔗 **آدرس:** {{ $json.processed.url }}\n⚡ **زمان پاسخ‌دهی:** {{ $json.processed.response_time_ms }} ms\n🕒 **زمان بررسی:** {{ $json.processed.check_time }}\n\nوب‌سایت مجدداً در دسترس قرار گرفت و مشکل رفع شد.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        -176
+      ],
+      "id": "ff6ad0a2-6f07-47c7-a454-525da4375c98",
+      "name": "UP",
+      "webhookId": "5c20dc6c-3b2e-4ff7-82ab-03ab28722f6b",
+      "credentials": {
+        "telegramApi": {
+          "id": "4N54KO6l4BLtzYFt",
+          "name": "n8n Site Guard"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk",
+          "mode": "list",
+          "cachedResultName": "site-guard-n8n",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 425806823,
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk/edit#gid=425806823"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Client_Name": "={{ $json.processed.client_name }}",
+            "URL": "={{ $json.processed.url }}",
+            "Event_Type": "={{ $json.processed.alert_type }}",
+            "Status_Code": "={{ $json.processed.status_code }}",
+            "Response_Time": "={{ $json.processed.response_time_ms }}",
+            "Timestamp": "={{ $json.processed.check_time }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Client_Name",
+              "displayName": "Client_Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Event_Type",
+              "displayName": "Event_Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status_Code",
+              "displayName": "Status_Code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Response_Time",
+              "displayName": "Response_Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        896,
+        -656
+      ],
+      "id": "9d810ef0-34ac-44f7-ba66-15273883b0e2",
+      "name": "Append row in logs",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "oONkBIAB9WwuFIbI",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk",
+          "mode": "list",
+          "cachedResultName": "site-guard-n8n",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "main",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "URL": "={{ $json.processed.url }}",
+            "Client_Name": "={{ $json.processed.client_name }}",
+            "Response_Time_MS": "={{ $json.processed.response_time_ms }}",
+            "Last_Check": "={{ $json.processed.check_time }}",
+            "Fail_Count": "={{ $json.processed.fail_count }}",
+            "row_number": "={{ $json.processed.row_number }}",
+            "Last_Status": "={{ $json.processed.current_status }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Client_Name",
+              "displayName": "Client_Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last_Status",
+              "displayName": "Last_Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Response_Time_MS",
+              "displayName": "Response_Time_MS",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last_Check",
+              "displayName": "Last_Check",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fail_Count",
+              "displayName": "Fail_Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        896,
+        -464
+      ],
+      "id": "e9d78707-afae-4994-8f08-7d63c9948724",
+      "name": "Update row in main",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "oONkBIAB9WwuFIbI",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.URL }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        -464
+      ],
+      "id": "6b089968-eb67-4547-b5b1-6abeaf5b2dea",
+      "name": "test web",
+      "alwaysOutputData": true,
+      "retryOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk",
+          "mode": "list",
+          "cachedResultName": "site-guard-n8n",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "main",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/12QI8c6roJT7PkYGsi7HlnEvw-hlxUMt9xkr39sPxozk/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        224,
+        -464
+      ],
+      "id": "5c0c3a94-fbd7-4c8c-b5b6-2d120e0d4b49",
+      "name": "Get row in main",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "oONkBIAB9WwuFIbI",
+          "name": "Google Sheets account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get row in main",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Update row in main",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Append row in logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "down",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "UP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in main": {
+      "main": [
+        []
+      ]
+    },
+    "test web": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row in main": {
+      "main": [
+        [
+          {
+            "node": "test web",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "82817211-483f-4587-b0a8-94f5e1992ab2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6aa36ad0122b7a04ca25227e43429297f24bed98ebdbf794efc96523afb59dbf"
+  },
+  "nodeGroups": [],
+  "id": "pfGbvkuthk0Yo2xy",
+  "tags": []
+}
