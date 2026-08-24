@@ -33,8 +33,9 @@
 
 
 
-![n8n Workflow Canvas](./assets/workflow-canvas.png)
-
+<p align="center">
+  <img src="./Workflow-canvas.png" >
+</p>
 
 > 📌 این تصویر، زنجیرهٔ کامل این سیستم را نشان می‌دهد: از دریافت لیست سایت‌ها از گوگل شیت، بررسی هر سایت با HTTP Request، پردازش داده‌ها با JavaScript، ذخیره‌سازی وضعیت جدید و در نهایت تصمیم‌گیری برای ارسال هشدار یا پیام بازیابی.
 
